@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>売上予測ツール</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1d2430;--mut:#667085;--bd:#dde1e7;--ac:#2563eb;--ac2:#e8eefc}
+@media (prefers-color-scheme:dark){:root{--bg:#14171c;--card:#1c2027;--fg:#e6e9ee;--mut:#98a2b3;--bd:#323944;--ac:#6b9bff;--ac2:#232b3d}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,"Yu Gothic UI",Meiryo,sans-serif}
+header{padding:14px 20px;border-bottom:1px solid var(--bd);background:var(--card)}
+header h1{margin:0;font-size:18px}
+main{display:grid;grid-template-columns:340px 1fr;gap:16px;padding:16px;align-items:start}
+@media(max-width:900px){main{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-bottom:16px}
+.card h2{margin:0 0 10px;font-size:15px}
+label{display:block;font-size:12px;color:var(--mut);margin:8px 0 2px}
+select,input,button{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--bd);border-radius:6px;padding:5px 8px}
+select,input[type=text]{width:100%}
+button{cursor:pointer}button:hover{border-color:var(--ac)}
+button.pri{background:var(--ac);color:#fff;border-color:var(--ac)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.chk{display:flex;flex-wrap:wrap;gap:4px 10px;max-height:130px;overflow:auto;border:1px solid var(--bd);border-radius:6px;padding:6px}
+.chk label{display:inline-flex;gap:4px;align-items:center;margin:0;color:var(--fg);font-size:13px}
+.mini{font-size:12px;color:var(--mut)}
+table{border-collapse:collapse;width:100%}
+th,td{border-bottom:1px solid var(--bd);padding:3px 6px;text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+td input{width:76px;text-align:right}
+td input::placeholder{color:var(--ac);opacity:.85}
+.tw{overflow:auto}
+.prod{display:grid;grid-template-columns:1fr 62px 62px 28px;gap:4px;align-items:center;margin-bottom:4px}
+.prod input{width:100%;padding:4px 6px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:12px}
+canvas{width:100%;height:190px;display:block}
+.sum{display:flex;gap:18px;flex-wrap:wrap;margin:4px 0 8px}
+.sum div b{display:block;font-size:18px}
+.sum div span{font-size:12px;color:var(--mut)}
+.tag{background:var(--ac2);color:var(--ac);border-radius:4px;padding:0 6px;font-size:12px}
+</style>
+</head>
+<body>
+<header><h1>売上予測ツール <span class="mini">— 初速の売れ行き × 過去の人流 → 以後の売上個数を確率分布で予測</span></h1></header>
+<main>
+<div>
+  <div class="card">
+    <h2>① 人流データ(CSV)</h2>
+    <input type="file" id="file" accept=".csv,.txt,.tsv" multiple>
+    <div class="mini">複数CSVを選ぶと結合されます。文字コードは UTF-8 / Shift_JIS を自動判定。</div>
+    <div class="row" style="margin-top:6px"><button id="sample">サンプルデータで試す</button><span class="mini" id="loadinfo"></span></div>
+    <div id="mapbox" style="display:none">
+      <label>日付列(日時が1列なら日時列)</label><select id="m_date"></select>
+      <label>時刻列(日付列に時刻を含むなら「なし」)</label><select id="m_time"></select>
+      <label>方面列</label><select id="m_dir"></select>
+      <label>アレイ列</label><select id="m_arr"></select>
+      <label>人数列(「なし」なら行数を数える)</label><select id="m_cnt"></select>
+      <div class="mini" style="margin-top:6px">列を変えると自動で反映されます。</div>
+      <div class="tw mini" id="preview" style="margin-top:6px"></div>
+      <div id="mapmsg" class="mini" style="color:#d92d20"></div>
+      <button id="applymap" class="pri" style="margin-top:8px">再読み込み</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>② 絞り込み</h2>
+    <label>日付(複数選ぶと時間ごとの平均)<span class="tag" id="datemode"></span></label>
+    <div class="row"><button data-all="dates">全選択</button><button data-none="dates">全解除</button><button id="lastdate">最新日のみ</button></div>
+    <div class="chk" id="f_dates"></div>
+    <label>方面</label>
+    <div class="row"><button data-all="dirs">全選択</button><button data-none="dirs">全解除</button></div>
+    <div class="chk" id="f_dirs"></div>
+    <label>アレイ</label>
+    <div class="row"><button data-all="arrs">全選択</button><button data-none="arrs">全解除</button></div>
+    <div class="chk" id="f_arrs"></div>
+    <label>人流の補正倍率(当日が参照日より多い/少ない見込みなら)</label>
+    <input type="number" id="scale" step="0.05" min="0.1" value="1">
+    <div class="row"><div><label>営業開始(時)</label><input type="number" id="hstart" min="0" max="23" value="9"></div>
+    <div><label>営業終了(時・含む)</label><input type="number" id="hend" min="0" max="23" value="20"></div></div>
+  </div>
+
+  <div class="card">
+    <h2>③ 商品</h2>
+    <div class="prod mini"><span>商品名</span><span>事前率<br>/100人</span><span>事前の<br>強さ(人)</span><span></span></div>
+    <div id="prods"></div>
+    <button id="addprod">＋ 商品を追加</button>
+    <div class="mini" style="margin-top:6px">事前率=売れ行きの事前想定(100人あたり何個)。事前の強さ=その想定を何人分の実績に相当する確信とみなすか。実績が増えるほど実データが優先されます。</div>
+    <label>予測区間</label>
+    <select id="level"><option value="50">50%</option><option value="80" selected>80%</option><option value="90">90%</option><option value="95">95%</option></select>
+  </div>
+</div>
+
+<div>
+  <div class="card">
+    <h2>④ 時間ごとの売上入力 <span class="mini">(青文字=未入力時間の予測中央値と区間)</span></h2>
+    <div class="row"><button id="clearsales">売上入力をクリア</button>
+    <span class="mini">最後に入力した時間までは「実績」(空欄=0個)、それより後は予測します。</span></div>
+    <div class="tw"><table id="stbl"></table></div>
+  </div>
+  <div id="results"></div>
+</div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const KEY='salesForecastV1';
+let S={products:[{id:1,name:'商品A',prior:2,strength:300},{id:2,name:'商品B',prior:1,strength:300}],nextId:3,sales:{},level:80,scale:1,start:9,end:20};
+try{const o=JSON.parse(localStorage.getItem(KEY)||'null');if(o&&o.products)S=Object.assign(S,o)}catch(e){}
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}};
+
+/* ---------- CSV ---------- */
+let FULLDATE=null,RAW=null,RECS=[],SEL={dates:new Set(),dirs:new Set(),arrs:new Set()};
+function parseCSV(t){
+  t=t.replace(/^﻿/,'');
+  const first=t.split(/\r?\n/,1)[0],dl=(first.split('\t').length>first.split(',').length)?'\t':',';
+  const rows=[];let r=[],f='',q=false;
+  for(let i=0;i<t.length;i++){const c=t[i];
+    if(q){if(c=='"'){if(t[i+1]=='"'){f+='"';i++}else q=false}else f+=c}
+    else if(c=='"')q=true;else if(c==dl){r.push(f);f=''}
+    else if(c=='\n'){r.push(f.replace(/\r$/,''));rows.push(r);r=[];f=''}
+    else f+=c}
+  if(f!==''||r.length){r.push(f.replace(/\r$/,''));rows.push(r)}
+  return rows.filter(x=>x.some(v=>v.trim()!==''));
+}
+async function readFile(f){
+  const b=await f.arrayBuffer();
+  try{return new TextDecoder('utf-8',{fatal:true}).decode(b)}catch(e){return new TextDecoder('shift_jis').decode(b)}
+}
+function loadText(texts){
+  let header=null,body=[];
+  for(const t of texts){const rows=parseCSV(t);if(!rows.length)continue;
+    if(!header){header=rows[0];body=body.concat(rows.slice(1))}
+    else body=body.concat(rows.slice(rows[0].join()===header.join()?1:0))}
+  if(!header){$('loadinfo').textContent='読み込めるデータがありません';return}
+  RAW={header,body};
+  const opt=(sel,none)=>{sel.innerHTML=(none?`<option value="-1">${none}</option>`:'')+header.map((h,i)=>`<option value="${i}">${esc(h)}</option>`).join('')};
+  opt($('m_date'));opt($('m_time'),'なし');opt($('m_dir'),'なし');opt($('m_arr'),'なし');opt($('m_cnt'),'なし(行数)');
+  const g=(re)=>header.findIndex(h=>re.test(h));
+  const set=(id,i,def)=>$(id).value=String(i>=0?i:def);
+  set('m_date',g(/日付|日時|date|day/i),0);
+  set('m_time',g(/時刻|時間|時|time|hour/i),-1);
+  if($('m_time').value===$('m_date').value)$('m_time').value='-1';
+  $('m_dir').insertAdjacentHTML('afterbegin','<option value="-2">列が方面(見出しに「→」を含む列)</option>');
+  set('m_dir',g(/方面|方向|direction|dir/i),header.some(x=>/→|->/.test(x))?-2:-1);
+  set('m_arr',g(/アレイ|array/i),-1);
+  set('m_cnt',g(/人数|人流|通行|通過|カウント|count|人/i),-1);
+  $('mapbox').style.display='block';
+  $('loadinfo').textContent=`${body.length}行 読み込み`;
+  applyMap();
+}
+const iso=(y,m,d)=>`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+function parseDT(s){
+  s=String(s).trim();let m,date=null,hour=null;
+  if(m=s.match(/(\d{4})[\/\-.年](\d{1,2})[\/\-.月](\d{1,2})/)){date=iso(m[1],m[2],m[3]);s=s.slice(m.index+m[0].length)}
+  else if(m=s.match(/^(\d{4})(\d{2})(\d{2})/)){date=iso(m[1],m[2],m[3]);s=s.slice(8)}
+  if(m=s.match(/(\d{1,2})\s*[:時]/))hour=+m[1];
+  else if(m=s.match(/^\s*(\d{1,2})\s*$/))hour=+m[1];
+  return {date,hour};
+}
+function applyMap(){
+  if(!RAW)return;
+  const ci=+$('m_date').value,ti=+$('m_time').value,di=+$('m_dir').value,ai=+$('m_arr').value,ni=+$('m_cnt').value;
+  RECS=[];
+  for(const r of RAW.body){
+    const a=parseDT(r[ci]);let h=a.hour;
+    if(ti>=0){const b=parseDT(r[ti]);if(b.hour!=null)h=b.hour}
+    if(!a.date||h==null||h<0||h>23)continue;
+    if(di==-2){
+      RAW.header.forEach((hd,j)=>{if(!/→|->|＞|>/.test(hd))return;const v=parseFloat(String(r[j]).replace(/,/g,''));
+        if(isFinite(v))RECS.push({d:a.date,h,dir:hd.trim(),arr:ai>=0?(r[ai]||'').trim():'(全体)',n:v})});
+      continue}
+    let n=1;if(ni>=0){n=parseFloat(String(r[ni]).replace(/,/g,''));if(!isFinite(n))continue}
+    RECS.push({d:a.date,h,dir:di>=0?(r[di]||'').trim():'(全体)',arr:ai>=0?(r[ai]||'').trim():'(全体)',n});
+  }
+  $('loadinfo').textContent=`${RAW.body.length}行中 ${RECS.length}行を有効データとして使用`;
+  $('preview').innerHTML='<table><tr>'+RAW.header.map(h=>`<th>${esc(h)}</th>`).join('')+'</tr>'+RAW.body.slice(0,3).map(r=>'<tr>'+r.map(v=>`<td>${esc(v)}</td>`).join('')+'</tr>').join('')+'</table>';
+  $('mapmsg').textContent=RECS.length?'':'有効な行が0件です。日付列・時刻列・人数列の割り当てを見直してください。';
+  const uniq=k=>[...new Set(RECS.map(x=>x[k]))].sort();
+  const dates=uniq('d'),dirs=uniq('dir'),arrs=uniq('arr');
+  // 初期日付: データが欠けていない(時間数が十分ある)最新日
+  const hc={};RECS.forEach(r=>{(hc[r.d]=hc[r.d]||new Set()).add(r.h)});
+  const mx=Math.max(0,...Object.values(hc).map(s=>s.size));
+  const full=dates.filter(d=>hc[d].size>=mx*0.8);
+  const def=full.length?full[full.length-1]:dates[dates.length-1];
+  FULLDATE=def;
+  SEL.dates=new Set(def?[def]:[]);SEL.dirs=new Set(dirs);SEL.arrs=new Set(arrs);
+  buildFilters({dates,dirs,arrs});
+  if(def){ // 営業時間の初期値: 人流がピークの10%以上ある時間の範囲
+    const tot=Array(24).fill(0);RECS.forEach(r=>{if(r.d===def)tot[r.h]+=r.n});
+    const pk=Math.max(...tot),hs=tot.map((v,h)=>v>=pk*0.1?h:-1).filter(h=>h>=0);
+    if(hs.length){S.start=Math.min(...hs);S.end=Math.max(...hs);$('hstart').value=S.start;$('hend').value=S.end}}
+  refresh(true);
+}
+let FL={dates:[],dirs:[],arrs:[]};
+function buildFilters(f){
+  FL=f;
+  for(const k of ['dates','dirs','arrs']){
+    $('f_'+k).innerHTML=f[k].map(v=>`<label><input type="checkbox" data-k="${k}" value="${esc(v)}" ${SEL[k].has(v)?'checked':''}>${esc(v)}</label>`).join('')||'<span class="mini">データなし</span>';
+  }
+}
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* ---------- traffic ---------- */
+function traffic(){
+  const T=Array(24).fill(0),byD={};
+  for(const r of RECS){
+    if(!SEL.dates.has(r.d)||!SEL.dirs.has(r.dir)||!SEL.arrs.has(r.arr))continue;
+    (byD[r.d]=byD[r.d]||Array(24).fill(0))[r.h]+=r.n;
+  }
+  const ds=Object.values(byD);
+  if(ds.length)for(let h=0;h<24;h++)T[h]=ds.reduce((s,a)=>s+a[h],0)/ds.length;
+  return {T:T.map(v=>v*S.scale),nd:ds.length};
+}
+
+/* ---------- random / stats ---------- */
+function randn(){let u=0,v=0;while(!u)u=Math.random();v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)}
+function rgamma(a){ // shape a, scale 1
+  if(a<1)return rgamma(a+1)*Math.pow(Math.random(),1/a);
+  const d=a-1/3,c=1/Math.sqrt(9*d);
+  for(;;){let x,v;do{x=randn();v=1+c*x}while(v<=0);v=v*v*v;const u=Math.random();
+    if(u<1-0.0331*x*x*x*x||Math.log(u)<0.5*x*x+d*(1-v+Math.log(v)))return d*v}
+}
+function rpois(m){
+  if(m<=0)return 0;
+  if(m>40)return Math.max(0,Math.round(m+Math.sqrt(m)*randn()));
+  const L=Math.exp(-m);let k=0,p=1;do{k++;p*=Math.random()}while(p>L);return k-1;
+}
+const qt=(sorted,p)=>sorted[Math.min(sorted.length-1,Math.max(0,Math.floor(p*sorted.length)))];
+const NS=3000;
+
+/* ---------- model ---------- */
+// 売上 ~ Poisson(λ·人流)、λ(1人あたり購入数)~Gamma(事前)→ 実績で更新(ガンマ-ポアソン共役)
+function forecast(p,hrs,T){
+  const sales=S.sales[p.id]||{};
+  let last=-1;hrs.forEach((h,i)=>{if(typeof sales[h]==='number')last=i});
+  let obsSum=0,expo=0;
+  for(let i=0;i<=last;i++){obsSum+=sales[hrs[i]]||0;expo+=T[hrs[i]]}
+  const b0=Math.max(p.strength,1e-6),a0=Math.max(p.prior/100*b0,1e-6);
+  const a=a0+obsSum,b=b0+expo;
+  const n=hrs.length,fut=n-1-last;
+  const hourly=hrs.map(()=>new Float64Array(NS)),cum=hrs.map(()=>new Float64Array(NS));
+  for(let s=0;s<NS;s++){
+    const lam=rgamma(a)/b;let c=obsSum;
+    for(let i=last+1;i<n;i++){const x=rpois(lam*T[hrs[i]]);hourly[i][s]=x;c+=x;cum[i][s]=c}
+  }
+  const lo=(1-S.level/100)/2,hi=1-lo,out={last,obsSum,expo,lam:a/b,pred:[],cumPred:[],n};
+  for(let i=0;i<n;i++){
+    if(i<=last){out.pred.push(null);out.cumPred.push(null);continue}
+    const h=Array.from(hourly[i]).sort((x,y)=>x-y),c=Array.from(cum[i]).sort((x,y)=>x-y);
+    out.pred.push({lo:qt(h,lo),med:qt(h,.5),hi:qt(h,hi)});
+    out.cumPred.push({lo:qt(c,lo),med:qt(c,.5),hi:qt(c,hi)});
+  }
+  out.final=last>=n-1?{lo:obsSum,med:obsSum,hi:obsSum}:out.cumPred[n-1];
+  out.rem=last>=n-1?{lo:0,med:0,hi:0}:(()=>{const f=out.final;return{lo:f.lo-obsSum,med:f.med-obsSum,hi:f.hi-obsSum}})();
+  return out;
+}
+
+/* ---------- UI: products ---------- */
+function buildProds(){
+  $('prods').innerHTML=S.products.map(p=>`<div class="prod" data-id="${p.id}">
+    <input type="text" data-f="name" value="${esc(p.name)}">
+    <input type="number" data-f="prior" step="0.1" min="0" value="${p.prior}">
+    <input type="number" data-f="strength" step="50" min="1" value="${p.strength}">
+    <button data-del="${p.id}" title="削除">×</button></div>`).join('');
+}
+function buildTable(){
+  const hrs=hours(),{T}=traffic();
+  let h='<tr><th>時間</th><th>人流</th>'+S.products.map(p=>`<th>${esc(p.name)}</th>`).join('')+'</tr>';
+  for(const hr of hrs){
+    h+=`<tr><td>${hr}:00–${hr+1}:00</td><td>${T[hr].toFixed(0)}</td>`+S.products.map(p=>{
+      const v=(S.sales[p.id]||{})[hr];
+      return `<td><input type="number" min="0" step="1" data-p="${p.id}" data-h="${hr}" value="${typeof v==='number'?v:''}"></td>`}).join('')+'</tr>';
+  }
+  $('stbl').innerHTML=h;
+}
+function hours(){const a=[];for(let h=S.start;h<=S.end;h++)a.push(h);return a}
+
+let CACHE=[];
+function update(){
+  const hrs=hours(),{T,nd}=traffic();
+  $('datemode').textContent=nd>1?`${nd}日の平均`:(nd==1?'1日':'—');
+  // traffic column
+  const rows=$('stbl').rows;
+  hrs.forEach((h,i)=>{if(rows[i+1])rows[i+1].cells[1].textContent=T[h].toFixed(0)});
+  const noTraffic=!hrs.some(h=>T[h]>0);
+  let html='';
+  CACHE=[];
+  if(noTraffic)html='<div class="card">人流データが未読み込み、または選択範囲に該当データがありません。①と②を設定してください。</div>';
+  else S.products.forEach((p,pi)=>{
+    const f=forecast(p,hrs,T);CACHE.push(f);
+    const L=S.level;
+    html+=`<div class="card"><h2>${esc(p.name)}</h2>
+    <div class="sum">
+      <div><b>${f.obsSum}</b><span>実績(累計)</span></div>
+      <div><b>${f.rem.med}</b><span>残り予測 中央値(${f.rem.lo}〜${f.rem.hi} / ${L}%)</span></div>
+      <div><b>${f.final.med}</b><span>最終合計 中央値(${f.final.lo}〜${f.final.hi} / ${L}%)</span></div>
+      <div><b>${(f.lam*100).toFixed(2)}</b><span>推定 個/100人</span></div>
+    </div>
+    <div class="grid2"><div><div class="mini">時間ごとの売上個数(棒=実績、縦帯=予測区間)</div><canvas id="c1_${pi}"></canvas></div>
+    <div><div class="mini">累計売上個数(帯=${L}%予測区間)</div><canvas id="c2_${pi}"></canvas></div></div></div>`;
+    // placeholders
+    hrs.forEach((h,i)=>{const inp=$('stbl').querySelector(`input[data-p="${p.id}"][data-h="${h}"]`);
+      if(inp)inp.placeholder=f.pred[i]?`${f.pred[i].med} (${f.pred[i].lo}–${f.pred[i].hi})`:''});
+  });
+  $('results').innerHTML=html;
+  if(!noTraffic)S.products.forEach((p,pi)=>{
+    const f=CACHE[pi],sales=S.sales[p.id]||{};
+    const obs=hrs.map((h,i)=>i<=f.last?(sales[h]||0):null);
+    let c=0;const obsC=obs.map(v=>v==null?null:(c+=v));
+    draw($('c1_'+pi),hrs,obs,f.pred,'bar');
+    draw($('c2_'+pi),hrs,obsC,f.cumPred,'line');
+  });
+}
+function draw(cv,hrs,obs,pred,mode){
+  if(!cv)return;
+  const dpr=window.devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;
+  cv.width=w*dpr;cv.height=h*dpr;const x=cv.getContext('2d');x.scale(dpr,dpr);
+  const cs=getComputedStyle(document.body),fg=cs.color,ac=getComputedStyle(document.documentElement).getPropertyValue('--ac').trim()||'#2563eb';
+  const mut=getComputedStyle(document.documentElement).getPropertyValue('--mut').trim()||'#888',bd=getComputedStyle(document.documentElement).getPropertyValue('--bd').trim()||'#ccc';
+  const l=36,r=8,t=8,b=22,n=hrs.length;
+  let ymax=1;obs.forEach(v=>{if(v!=null)ymax=Math.max(ymax,v)});pred.forEach(q=>{if(q)ymax=Math.max(ymax,q.hi)});ymax*=1.1;
+  const X=i=>l+(i+.5)*(w-l-r)/n,Y=v=>t+(h-t-b)*(1-v/ymax);
+  x.font='11px sans-serif';x.fillStyle=mut;x.strokeStyle=bd;x.lineWidth=1;x.textAlign='right';
+  for(let k=0;k<=4;k++){const v=ymax*k/4,y=Y(v);x.beginPath();x.moveTo(l,y);x.lineTo(w-r,y);x.stroke();x.fillText(v.toFixed(v<10?1:0),l-4,y+4)}
+  x.textAlign='center';const step=Math.ceil(n/12);hrs.forEach((hr,i)=>{if(i%step==0)x.fillText(hr+'時',X(i),h-6)});
+  const bw=Math.min(24,(w-l-r)/n*.6);
+  x.globalAlpha=1;
+  if(mode=='bar'){
+    obs.forEach((v,i)=>{if(v==null)return;x.fillStyle=ac;x.fillRect(X(i)-bw/2,Y(v),bw,Y(0)-Y(v))});
+    pred.forEach((q,i)=>{if(!q)return;x.globalAlpha=.25;x.fillStyle=ac;x.fillRect(X(i)-bw/2,Y(q.hi),bw,Math.max(2,Y(q.lo)-Y(q.hi)));
+      x.globalAlpha=1;x.fillStyle=ac;x.beginPath();x.arc(X(i),Y(q.med),3,0,7);x.fill()});
+  }else{
+    let li=-1;obs.forEach((v,i)=>{if(v!=null)li=i});
+    if(li>=0&&pred.some(q=>q)){
+      x.globalAlpha=.22;x.fillStyle=ac;x.beginPath();x.moveTo(X(li),Y(obs[li]));
+      for(let i=li+1;i<n;i++)x.lineTo(X(i),Y(pred[i].hi));
+      for(let i=n-1;i>li;i--)x.lineTo(X(i),Y(pred[i].lo));x.closePath();x.fill();
+      x.globalAlpha=1;x.strokeStyle=ac;x.setLineDash([5,4]);x.beginPath();x.moveTo(X(li),Y(obs[li]));
+      for(let i=li+1;i<n;i++)x.lineTo(X(i),Y(pred[i].med));x.stroke();x.setLineDash([]);
+    }else if(li<0&&pred.some(q=>q)){
+      x.globalAlpha=.22;x.fillStyle=ac;x.beginPath();x.moveTo(X(0),Y(pred[0].hi));
+      for(let i=1;i<n;i++)x.lineTo(X(i),Y(pred[i].hi));for(let i=n-1;i>=0;i--)x.lineTo(X(i),Y(pred[i].lo));x.closePath();x.fill();
+      x.globalAlpha=1;x.strokeStyle=ac;x.setLineDash([5,4]);x.beginPath();pred.forEach((q,i)=>i?x.lineTo(X(i),Y(q.med)):x.moveTo(X(i),Y(q.med)));x.stroke();x.setLineDash([]);
+    }
+    x.strokeStyle=ac;x.lineWidth=2;x.beginPath();let st=false;
+    obs.forEach((v,i)=>{if(v==null)return;st?x.lineTo(X(i),Y(v)):x.moveTo(X(i),Y(v));st=true});x.stroke();
+  }
+}
+function refresh(rebuild){if(rebuild){buildProds();buildTable()}update();save()}
+
+/* ---------- events ---------- */
+$('file').onchange=async e=>{const t=[];for(const f of e.target.files)t.push(await readFile(f));loadText(t)};
+$('applymap').onclick=applyMap;
+['m_date','m_time','m_dir','m_arr','m_cnt'].forEach(i=>$(i).onchange=applyMap);
+document.addEventListener('change',e=>{
+  const t=e.target;
+  if(t.dataset&&t.dataset.k){const k=t.dataset.k;t.checked?SEL[k].add(t.value):SEL[k].delete(t.value);buildTable();update()}
+});
+document.addEventListener('click',e=>{
+  const t=e.target;
+  if(t.dataset.all||t.dataset.none){const k=t.dataset.all||t.dataset.none;SEL[k]=new Set(t.dataset.all?FL[k]:[]);buildFilters(FL);buildTable();update()}
+  if(t.id==='lastdate'){SEL.dates=new Set(FULLDATE?[FULLDATE]:FL.dates.slice(-1));buildFilters(FL);buildTable();update()}
+  if(t.dataset.del){S.products=S.products.filter(p=>p.id!=t.dataset.del);delete S.sales[t.dataset.del];refresh(true)}
+});
+$('addprod').onclick=()=>{S.products.push({id:S.nextId++,name:'新商品'+S.nextId,prior:1,strength:300});refresh(true)};
+$('prods').addEventListener('input',e=>{
+  const row=e.target.closest('.prod'),p=S.products.find(p=>p.id==row.dataset.id);if(!p)return;
+  const f=e.target.dataset.f;p[f]=f=='name'?e.target.value:(parseFloat(e.target.value)||0);
+  if(f=='name'){[...$('stbl').rows[0].cells].forEach((c,i)=>{if(i>=2)c.textContent=S.products[i-2].name})}
+  update();save();
+});
+$('stbl').addEventListener('input',e=>{
+  const t=e.target;if(!t.dataset.p)return;
+  const m=S.sales[t.dataset.p]=S.sales[t.dataset.p]||{};
+  if(t.value==='')delete m[t.dataset.h];else m[t.dataset.h]=Math.max(0,Math.round(+t.value));
+  update();save();
+});
+$('clearsales').onclick=()=>{if(confirm('入力した売上をすべて消しますか?')){S.sales={};refresh(true)}};
+$('level').onchange=e=>{S.level=+e.target.value;update();save()};
+$('scale').oninput=e=>{S.scale=parseFloat(e.target.value)||1;update();save()};
+$('hstart').onchange=e=>{S.start=Math.min(23,Math.max(0,+e.target.value||0));if(S.start>S.end)S.end=S.start;$('hend').value=S.end;buildTable();update();save()};
+$('hend').onchange=e=>{S.end=Math.min(23,Math.max(0,+e.target.value||0));if(S.end<S.start)S.start=S.end;$('hstart').value=S.start;buildTable();update();save()};
+window.addEventListener('resize',()=>update());
+
+/* ---------- sample data ---------- */
+$('sample').onclick=()=>{
+  const dirs=['駅方面','公園方面'],arrs=['A1','A2'],prof=[.2,.5,1,1.6,2.4,2.8,2.2,1.6,1.4,1.7,2.1,1.4,.8,.4];
+  let s='日付,時刻,方面,アレイ,人数\n';
+  for(let d=1;d<=14;d++){const wk=(d%7==0||d%7==6)?1.4:1;
+    for(let h=8;h<=21;h++)for(const di of dirs)for(const a of arrs)
+      s+=`2026/10/${String(d).padStart(2,'0')},${h}:00,${di},${a},${rpois(prof[h-8]*40*wk*(di=='駅方面'?1.5:1)*(a=='A1'?1.2:.8))}\n`}
+  loadText([s]);
+};
+
+$('scale').value=S.scale;$('level').value=S.level;$('hstart').value=S.start;$('hend').value=S.end;
+refresh(true);
+</script>
+</body>
+</html>
